@@ -1,0 +1,186 @@
+{
+	"name": "prisma-sase-connector",
+	"commands": [
+		"std:test-connection",
+		"std:account:list",
+		"std:account:read",
+		"std:account:create",
+		"std:account:update",
+		"std:entitlement:list",
+		"std:entitlement:read"
+	],
+	"sourceConfig": [
+		{
+			"type": "menu",
+			"label": "Configuration",
+			"items": [
+				{
+					"type": "section",
+					"sectionTitle": "Authentication",
+					"sectionHelpMessage": "Provide connection parameters to interact securely with the target application.",
+					"items": [
+						{
+							"key": "baseURL",
+							"label": "Base URL",
+							"type": "text",
+							"placeholder": "https://api.sase.paloaltonetworks.com",
+							"required": true
+						},
+						{
+							"key": "authUrl",
+							"label": "OAuth URL",
+							"placeholder": "https://auth.apps.paloaltonetworks.com/oauth2/access_token",
+							"type": "text",
+							"required": true
+						},
+						{
+							"key": "client_id",
+							"label": "Client ID",
+							"type": "text",
+							"required": true
+						},
+						{
+							"key": "client_secret",
+							"label": "Client Secret",
+							"type": "secret",
+							"required": true
+						},
+						{
+							"key": "tsg_id",
+							"label": "Tenant Service Group ID",
+							"helpText": "This is the tenant that users & access policies will be assigned to.",
+							"type": "text",
+							"required": true
+						},
+						{
+							"key": "readAllTenants",
+							"label": "Aggregate all tenants?",
+							"type": "checkbox",
+							"helpText": "Check if you would like to aggregate users across all tenants."
+						}
+					]
+				}
+			]
+		}
+	],
+	"accountSchema":{
+		"displayAttribute": "principal",
+		"identityAttribute": "principal",
+		"attributes":[
+			{
+				"name": "principal",
+				"type": "string",
+				"description": "Email of the account"
+			},
+			{
+				"name": "principal_type",
+				"type": "string",
+				"description": "Type of account"
+			},
+			{
+				"name": "principal_display_name",
+				"type": "string",
+				"description": "Display name of the account"
+			},
+			{
+				"name": "roles",
+				"type": "string",
+				"entitlement": true,
+				"managed": true,
+				"multi": true,
+				"description": "Roles the user has.",
+				"schemaObjectType": "role"
+			},
+			{
+				"name": "custom_roles",
+				"type": "string",
+				"entitlement": true,
+				"managed": true,
+				"multi": true,
+				"description": "Custom roles the user has.",
+				"schemaObjectType": "custom_role"
+			}
+		]
+	},
+	"entitlementSchemas": [
+		{
+			"type": "role",
+			"displayAttribute": "label",
+			"identityAttribute": "id",
+			"attributes": [
+				{
+					"name": "id",
+					"type": "string",
+					"description": "Resource\role for the entitlement."
+				},
+				{
+					"name": "role",
+					"type": "string",
+					"description": "Role."
+				},
+				{
+					"name": "resource",
+					"type": "string",
+					"description": "Resource the role applies to."
+				},
+				{
+					"name": "label",
+					"type": "string",
+					"description": "Displayable label for the role."
+				},
+				{
+					"name": "description",
+					"type": "string",
+					"description": "Description of the role."
+				},
+				{
+					"name": "type",
+					"type": "string",
+					"description": "Type of the role."
+				},
+				{
+					"name": "app_id",
+					"type": "string",
+					"description": "Application the role is applicable to."
+				}
+			]
+		},
+		{
+			"type": "custom_role",
+			"displayAttribute": "label",
+			"identityAttribute": "id",
+			"attributes": [
+				{
+					"name": "id",
+					"type": "string",
+					"description": "Resource\role for the entitlement."
+				},
+				{
+					"name": "role",
+					"type": "string",
+					"description": "Role."
+				},
+				{
+					"name": "resource",
+					"type": "string",
+					"description": "Resource the role applies to."
+				},
+				{
+					"name": "label",
+					"type": "string",
+					"description": "Displayable label for the role."
+				},
+				{
+					"name": "description",
+					"type": "string",
+					"description": "Description of the role."
+				},
+				{
+					"name": "type",
+					"type": "string",
+					"description": "Type of the role."
+				}
+			]
+		}
+	]
+}

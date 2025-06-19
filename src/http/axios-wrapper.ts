@@ -4,12 +4,12 @@ import { HTTP } from "./http";
 
 export class AxiosWrapper implements HTTP {
     httpClient: AxiosInstance;
-    constructor() {
+    constructor(baseUrl: string, token: string) {
         this.httpClient = axios.create({
-            baseURL: globalThis.__BASE_URL,
+            baseURL: baseUrl,
             headers: {
                 'Accept': 'application/json',
-                'Authorization': 'Bearer ' + globalThis.__ACCESS_TOKEN
+                'Authorization': 'Bearer ' + token
             }
         })
 
@@ -44,6 +44,10 @@ export class AxiosWrapper implements HTTP {
 
     async post<T = any>(url: string, data?: any) {
         return this.httpClient.post<T>(url, data);
+    }
+
+    async patch<T = any>(url: string, data?: any) {
+        return this.httpClient.patch<T>(url, data);
     }
 
     async delete<T = any>(url: string, data?: any) {

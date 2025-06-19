@@ -6,4 +6,6 @@ export class Entitlement {
     description? : string
     type? : string
     app_id? :string
+    id?: string
+    name?: string
 }

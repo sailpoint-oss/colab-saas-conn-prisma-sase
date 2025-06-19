@@ -65,12 +65,15 @@ export const connector = async () => {
                 case 'custom_role':
                     var entitlements = await myClient.getAllEntitlements(input.type)
                     break
+                case 'csp_role':
+                    var entitlements = await myClient.getAllEntitlements(input.type)
+                    break
                 default:
                     const message = `Unsupported entitlement type ${input.type}`
                     throw new ConnectorError(message)
             }
             for (const entitlement of entitlements) {
-                res.send(util.groupToEntitlement(entitlement))
+                res.send(util.groupToEntitlement(entitlement, input.type))
             }
             if (entitlements.length == 0) {
 
@@ -80,7 +83,7 @@ export const connector = async () => {
         .stdEntitlementRead(async (context: Context, input: StdEntitlementReadInput, res: Response<StdEntitlementReadOutput>) => {
             logger.debug("Running stdEntitlementRead.")
             const entitlement = await myClient.getEntitlement(input.identity, input.type)
-            res.send(util.groupToEntitlement(entitlement))
+            res.send(util.groupToEntitlement(entitlement, input.type))
             logger.info(`stdEntitlementRead read entitlement : ${input.identity}`)
         })
         .stdAccountCreate(async (context: Context, input: StdAccountCreateInput, res: Response<StdAccountCreateOutput>) => {
@@ -104,7 +107,7 @@ export const connector = async () => {
             await new Promise(f => setTimeout(f, userUpdatePause));
             //Get the new user
             let newAccount =  await myClient.getAccount(input.identity)
-            console.log('New Account: ' + newAccount)
+            console.log('New Account: ' + JSON.stringify(newAccount))
             res.send(util.userToAccount(newAccount))
         })
 }

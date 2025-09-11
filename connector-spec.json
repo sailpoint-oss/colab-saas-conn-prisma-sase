@@ -9,6 +9,10 @@
 		"std:entitlement:list",
 		"std:entitlement:read"
 	],
+	"sourceConfigInitialValues": {
+		"baseURL": "https://api.sase.paloaltonetworks.com",
+		"authUrl": "https://auth.apps.paloaltonetworks.com/oauth2/access_token"
+	},
 	"sourceConfig": [
 		{
 			"type": "menu",
@@ -17,7 +21,7 @@
 				{
 					"type": "section",
 					"sectionTitle": "Authentication",
-					"sectionHelpMessage": "Provide connection parameters to interact securely with the target application.",
+					"sectionHelpMessage": "Provide connection parameters to interact securely with the PRISMA SASE IAM application.",
 					"items": [
 						{
 							"key": "baseURL",
@@ -59,14 +63,43 @@
 							"helpText": "Check if you would like to aggregate users across all tenants."
 						}
 					]
+				},
+				{
+					"type": "section",
+					"sectionTitle": "CSP Management",
+					"sectionHelpMessage": "Settings for controlling Prisma CSP accounts.",
+					"items": [
+						{
+							"key": "manageCSP",
+							"label": "Create CSP Users?",
+							"type": "checkbox",
+							"helpText": "The connector will aggregate CSP accounts and create the CSP accounts of new users with the Standard User role if checked."
+						},
+						{
+							"key": "csp_client_id",
+							"label": "Client ID",
+							"type": "text",
+							"parentKey": "manageCSP",
+    						"parentValue": "true",
+							"required": true
+						},
+						{
+							"key": "csp_client_secret",
+							"label": "Client Secret",
+							"type": "secret",
+							"parentKey": "manageCSP",
+    						"parentValue": "true",
+							"required": true
+						}
+					]
 				}
 			]
 		}
 	],
-	"accountSchema":{
+	"accountSchema": {
 		"displayAttribute": "principal",
 		"identityAttribute": "principal",
-		"attributes":[
+		"attributes": [
 			{
 				"name": "principal",
 				"type": "string",

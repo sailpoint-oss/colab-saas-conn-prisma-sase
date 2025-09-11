@@ -1,9 +1,10 @@
 import { AttributeChange, AttributeChangeOp, ConnectorError, logger } from "@sailpoint/connector-sdk"
-import { check_token_expiration, auth } from "./tools/generic-functions"
+import { check_token_expiration, auth, auth_csp } from "./tools/generic-functions"
 import { HTTPFactory } from "./http/http-factory"
 import { User } from "./model/user"
 import { Entitlement } from "./model/entitlement"
 import { applications } from "./data/applications"
+import { csp_rolesRef } from "./data/csp_roles"
 import { rolesRef } from "./data/roles"
 import { AxiosError } from "axios"
 
@@ -14,34 +15,62 @@ export class PrismaSASEClient {
 
         // Remove trailing slash in URL if present.  Then store in Global Variables.
         if (config?.baseURL.substr(config?.baseURL.length - 1) == '/') {
-            globalThis.__BASE_URL = config?.baseURL.substr(0, config?.instance.length - 1)
+            globalThis.__BASE_URL = config?.baseURL.substr(0, config?.baseURL.length - 1)
         } else {
             globalThis.__BASE_URL = config?.baseURL
         }
 
-        // Remove trailing slash in Auth URL if present.  Then store in Global Variables.
         if (config?.authUrl.substr(config?.authUrl.length - 1) == '/') {
             globalThis.__AUTHURL = config?.authUrl.substr(0, config?.authUrl.length - 1)
         } else {
             globalThis.__AUTHURL = config?.authUrl
         }
 
+        globalThis.__CSP_MANAGE = config?.manageCSP
+
+        if (globalThis.__CSP_MANAGE) {
+            if (config?.csp_baseURL.substr(config?.csp_baseURL.length - 1) == '/') {
+                globalThis.__CSP_BASE_URL = config?.csp_baseURL.substr(0, config?.instance.length - 1)
+            } else {
+                globalThis.__CSP_BASE_URL = config?.csp_baseURL
+            }
+
+            if (config?.csp_authUrl.substr(config?.csp_authUrl.length - 1) == '/') {
+                globalThis.__CSP_AUTHURL = config?.csp_authUrl.substr(0, config?.csp_authUrl.length - 1)
+            } else {
+                globalThis.__CSP_AUTHURL = config?.csp_authUrl
+            }
+        }
+
         // Store Client Credentials in Global Variables
         globalThis.__CLIENT_ID = config?.client_id
         globalThis.__CLIENT_SECRET = config?.client_secret
         globalThis.__TSGID = config?.tsg_id
-        globalThis.__READ_ALL_TENANTS = config.readAllTenants ? config.readAllTenants : false
+        globalThis.__READ_ALL_TENANTS = config?.readAllTenants ? config?.readAllTenants : false
+        // Store Client Credentials for CSP
+        globalThis.__CSP_CLIENT_ID = config?.csp_client_id
+        globalThis.__CSP_CLIENT_SECRET = config?.csp_client_secret
         // pageSize for GET all Records
         globalThis.__pageSize = 50
-        globalThis.__USER_PAUSE = config.userUpdatePause ? config.userUpdatePause : 500
+        globalThis.__USER_PAUSE = config?.userUpdatePause ? config?.userUpdatePause : 500
     }
 
-    async checkTokenValidity(): Promise<void> {
-        let valid_token = await check_token_expiration()
+    async checkTokenValidity(version?: string): Promise<void> {
+        if (version && version == "csp") {
+            var expiration = globalThis.__CSP_EXPIRATION_TIME
+        } else {
+            var expiration = globalThis.__EXPIRATION_TIME
+        }
+        let valid_token = await check_token_expiration(expiration)
         if ((valid_token == 'undefined') || (valid_token == 'expired')) {
             console.log('######### Expiration Time is undefined or in the past')
-            let resAuth = await auth()
-            logger.info(`Auth Status : ${JSON.stringify(resAuth.status)}`)
+            if (version && version == "csp") {
+                let resAuth = await auth_csp()
+                logger.info(`Auth Status : ${JSON.stringify(resAuth.status)}`)
+            } else {
+                let resAuth = await auth()
+                logger.info(`Auth Status : ${JSON.stringify(resAuth.status)}`)
+            }
         }
         else if (valid_token == 'valid') {
             console.log('### Expiration Time is in the future:  No need to Re-Authenticate')
@@ -52,10 +81,10 @@ export class PrismaSASEClient {
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
 
         // We get all the lists of permission sets.
-        const response = await httpClient.get('iam/v1/access_policies').catch((error: unknown) => {
+        const response = await httpClient.get('/iam/v1/access_policies').catch((error: unknown) => {
             throw new ConnectorError(`Failed to retrieve access policies: ${error}`)
         })
         var access_policies = response.data.items
@@ -89,6 +118,7 @@ export class PrismaSASEClient {
                     user.principal = access_policy.principal
                     user.principal_display_name = access_policy.principal_display_name
                     user.principal_type = access_policy.principal_type
+                    user.hasPANaccount = true
                     // Create first entitlement for the user
                     let entitlement = new Entitlement()
                     entitlement.resource = access_policy.resource
@@ -106,6 +136,51 @@ export class PrismaSASEClient {
                 }
             }
         }
+
+        if (globalThis.__CSP_MANAGE) {
+            await this.checkTokenValidity("csp")
+            let httpClient = HTTPFactory.getHTTP(globalThis.__CSP_BASE_URL, globalThis.__CSP_ACCESS_TOKEN);
+            const response = await httpClient.get('/v2/memberships/support-account?size=1000').catch((error: unknown) => {
+                throw new ConnectorError(`Failed to retrieve csp users: ${error}`)
+            })
+            if (response.data.data.length > 0) {
+                for (var csp_u of response.data.data) {
+                    if (users.has(csp_u.email)) {
+                        let user = users.get(csp_u.email)!
+                        user.userAccountId = csp_u.userAccountId
+                        user.supportAccountId = csp_u.supportAccountId
+                        user.activationDate = csp_u.activationDate
+                        user.hasCSPaccount = true
+                        user.csp_roles = []
+                        for (var memRole of csp_u.membershipRoles) {
+                            let entitlement = new Entitlement()
+                            entitlement.type = 'csp_role'
+                            entitlement.name = memRole.roleName
+                            entitlement.id = memRole.roleId
+                            user.csp_roles.push(entitlement)
+                        }
+                        users.set(csp_u.email, user)
+                    } else {
+                        let user = new User()
+                        user.principal = csp_u.email
+                        user.principal_type = 'user'
+                        user.userAccountId = csp_u.userAccountId
+                        user.supportAccountId = csp_u.supportAccountId
+                        user.activationDate = csp_u.activationDate
+                        user.hasCSPaccount = true
+                        user.csp_roles = []
+                        for (var memRole of csp_u.membershipRoles) {
+                            let entitlement = new Entitlement()
+                            entitlement.type = 'csp_role'
+                            entitlement.name = memRole.roleName
+                            entitlement.id = memRole.roleId
+                            user.csp_roles.push(entitlement)
+                        }
+                        users.set(csp_u.email, user)
+                    }
+                }
+            }
+        }
         // Return the list of values
         return Array.from(users.values())
     }
@@ -114,10 +189,10 @@ export class PrismaSASEClient {
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
 
         // We get all the lists of permission sets.
-        const response = await httpClient.get('iam/v1/access_policies?principal=' + identity).catch((error: unknown) => {
+        const response = await httpClient.get('/iam/v1/access_policies?principal=' + identity).catch((error: unknown) => {
             throw new ConnectorError(`Failed to retrieve access policies for user ${identity}: ${error}`)
         })
         var access_policies = response.data.items
@@ -138,6 +213,30 @@ export class PrismaSASEClient {
             }
 
         }
+
+        if (globalThis.__CSP_MANAGE) {
+            await this.checkTokenValidity("csp")
+            let httpClient = HTTPFactory.getHTTP(globalThis.__CSP_BASE_URL, globalThis.__CSP_ACCESS_TOKEN);
+            const response = await httpClient.get('/v2/memberships?email=' + identity).catch((error: unknown) => {
+                throw new ConnectorError(`Failed to retrieve CSP profile for user ${identity}: ${error}`)
+            })
+            if (response.data.data.length > 0) {
+                let csp_user_data = response.data.data[0]
+                user.userAccountId = csp_user_data.userAccountId
+                user.supportAccountId = csp_user_data.supportAccountId
+                user.activationDate = csp_user_data.activationDate
+                user.csp_roles = []
+                const cspRoleMap = new Map(Array.from(csp_rolesRef, a => [a.name, a.id]))
+                for (var memRole of csp_user_data.membershipRoles) {
+                    let entitlement = new Entitlement()
+                    entitlement.type = 'csp_role'
+                    entitlement.name = memRole.roleName
+                    entitlement.id = cspRoleMap.get(memRole.roleName)
+                    user.csp_roles.push(entitlement)
+                }
+            }
+        }
+
         return user
     }
 
@@ -152,12 +251,56 @@ export class PrismaSASEClient {
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
 
-        await httpClient.post<void>(`iam/v1/access_policies`, {
+        await httpClient.post<void>(`/iam/v1/access_policies`, {
             principal: principal,
             resource: resource,
             role: role
+        }).catch((error: AxiosError) => {
+            logger.error(`Error in assigning access policy principal: ${principal} | resource: ${resource} | role: ${role}`)
+            throw new ConnectorError(error.message)
+        })
+
+        return true
+    }
+
+    async createCSPAccount(email: string, firstName: string, lastName: string): Promise<boolean> {
+        await this.checkTokenValidity("csp")
+        let httpClient = HTTPFactory.getHTTP(globalThis.__CSP_BASE_URL, globalThis.__CSP_ACCESS_TOKEN);
+
+        await httpClient.post<void>(`/v2/users`, {
+            email: email,
+            firstName: firstName,
+            lastName: lastName
+        }).catch((error: AxiosError) => {
+            throw new ConnectorError(error.message)
+        })
+
+        return true
+    }
+
+    async assignCSPMembershipRoles(email: string, roles: number[]): Promise<boolean> {
+        await this.checkTokenValidity("csp")
+        let httpClient = HTTPFactory.getHTTP(globalThis.__CSP_BASE_URL, globalThis.__CSP_ACCESS_TOKEN);
+
+        await httpClient.post<void>(`/v2/memberships`, {
+            email: email,
+            membershipRoles: roles
+        }).catch((error: AxiosError) => {
+            throw new ConnectorError(error.message)
+        })
+
+        return true
+    }
+
+    async setCSPMembershipRoles(email: string, roles: number[]): Promise<boolean> {
+        await this.checkTokenValidity("csp")
+        let httpClient = HTTPFactory.getHTTP(globalThis.__CSP_BASE_URL, globalThis.__CSP_ACCESS_TOKEN);
+
+        await httpClient.patch<void>(`/v2/memberships`, {
+            email: email,
+            membershipRoles: roles
         }).catch((error: AxiosError) => {
             throw new ConnectorError(error.message)
         })
@@ -169,10 +312,10 @@ export class PrismaSASEClient {
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
 
         // We get all the lists of permission sets.
-        const response = await httpClient.get(`iam/v1/access_policies?principal=${principal}&role=${role}`).catch((error: unknown) => {
+        const response = await httpClient.get(`/iam/v1/access_policies?principal=${principal}&role=${role}`).catch((error: unknown) => {
             throw new ConnectorError(`Failed to retrieve access policies: ${error}`)
         })
         var access_policies = response.data.items
@@ -196,10 +339,10 @@ export class PrismaSASEClient {
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
 
         // We get all the lists of permission sets.
-        const response = await httpClient.delete(`iam/v1/access_policies/${id}`).catch((error: unknown) => {
+        const response = await httpClient.delete(`/iam/v1/access_policies/${id}`).catch((error: unknown) => {
             throw new ConnectorError(`Failed to retrieve access policies: ${error}`)
         })
 
@@ -235,12 +378,14 @@ export class PrismaSASEClient {
         return newUser
     }
 
-    async updateAccount(account: string, changes: AttributeChange[]): Promise<boolean> {
+    async updateAccount(account: string, changes: AttributeChange[], origAccount?: User): Promise<boolean> {
         changes.forEach(async c => {
             switch (c.op) {
                 case AttributeChangeOp.Add:
                     if (c.attribute == 'role' || c.attribute == 'custom_role')
                         await this.assignAccessPolicyFromValue(account, c.value)
+                    else if (globalThis.__CSP_MANAGE && c.attribute == 'csp_role')
+                        this.assignCSPMembershipRoles(account, c.value)
                     break
                 case AttributeChangeOp.Set:
                     break
@@ -259,7 +404,7 @@ export class PrismaSASEClient {
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
 
         try {
             const roleList = await httpClient.get('iam/v1/roles/adem_tier_1_support')
@@ -273,7 +418,7 @@ export class PrismaSASEClient {
                 console.log('#### Error status = 401')
                 let resAuth: any = await auth()
                 logger.info(`Auth Status : ${JSON.stringify(resAuth.status)}`)
-                httpClient = HTTPFactory.getHTTP();
+                httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
                 let roleList = await httpClient.get('iam/v1/roles/adem_tier_1_support')
             } else {
                 console.log('We are about to throw ConnectorError in Test Connection')
@@ -290,20 +435,24 @@ export class PrismaSASEClient {
             entitlements = await this.getAllRoles()
         } else if (type == 'custom_role') {
             entitlements = await this.getAllCustomRoles()
+        } else if (type == 'csp_role') {
+            entitlements = await this.getAllCSPRoles()
         }
         return entitlements
     }
 
     async getAllRoles(): Promise<Entitlement[]> {
+        console.log(`Entering getAllRoles().`)
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
         let entitlements: Entitlement[] = []
         // Get roles
         const responseRoles = await httpClient.get('iam/v1/roles').catch((error: unknown) => {
             throw new ConnectorError(`Failed to retrieve roles: ${error}`)
         })
+
         var roles = responseRoles.data.items
         for (var role of roles) {
             let entitlement = new Entitlement()
@@ -311,10 +460,11 @@ export class PrismaSASEClient {
             entitlement.label = role.label
             entitlement.role = role.name
             entitlement.type = 'role'
-            entitlement.resource = role.app_id ? 'prn:' + global.__TSGID + ':' + role.app_id + ':::' : 'prn:' + global.__TSGID + '::::'
+            entitlement.resource = role.app_id ? 'prn:' + globalThis.__TSGID + ':' + role.app_id + ':::' : 'prn:' + globalThis.__TSGID + '::::'
             entitlement.app_id = role.app_id
             entitlements.push(entitlement)
-            if (!role.app_id && rolesRef[role.name].global) {
+
+            if (!role.app_id && rolesRef[role.name] && rolesRef[role.name]['global']) {
                 console.log(`Role ${role.name} does not have an app_id. Applying globally.`)
                 for (var app of applications) {
                     let subEnt = new Entitlement()
@@ -322,7 +472,7 @@ export class PrismaSASEClient {
                     subEnt.label = role.label + ' - ' + app.displayName
                     subEnt.role = role.name
                     subEnt.type = 'role'
-                    subEnt.resource = 'prn:' + global.__TSGID + ':' + app.name + ':::'
+                    subEnt.resource = 'prn:' + globalThis.__TSGID + ':' + app.name + ':::'
                     subEnt.app_id = app.name
                     entitlements.push(subEnt)
                 }
@@ -335,7 +485,7 @@ export class PrismaSASEClient {
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
         let entitlements: Entitlement[] = []
         // Get custom roles
         const responseCustRoles = await httpClient.get('iam/v1/custom_roles').catch((error: unknown) => {
@@ -346,11 +496,18 @@ export class PrismaSASEClient {
             let entitlement = new Entitlement()
             entitlement.description = role.description
             entitlement.label = role.label
-            entitlement.role = role.name
+            entitlement.role = role.id
             entitlement.type = 'custom_role'
-            entitlement.resource = role.tsg_id ? 'prn:' + role.tsg_id + ':prima_access:::' : 'prn:' + global.__TSGID + '::::'
+            entitlement.resource = role.tsg_id ? 'prn:' + role.tsg_id + ':prisma_access:::' : 'prn:' + globalThis.__TSGID + '::::'
             entitlements.push(entitlement)
         }
+        return entitlements
+    }
+
+    async getAllCSPRoles(): Promise<Entitlement[]> {
+        let entitlements: Entitlement[] = []
+        if(globalThis.__CSP_MANAGE)
+            entitlements = csp_rolesRef
         return entitlements
     }
 
@@ -358,7 +515,7 @@ export class PrismaSASEClient {
         //Check expiration tiem for Bearer toekn in Global variable
         await this.checkTokenValidity()
 
-        let httpClient = HTTPFactory.getHTTP();
+        let httpClient = HTTPFactory.getHTTP(globalThis.__BASE_URL, globalThis.__ACCESS_TOKEN);
         let entitlement = new Entitlement()
         if (type == 'role') {
             const response = await httpClient.get('iam/v1/roles/' + identity).catch((error: unknown) => {
@@ -369,7 +526,7 @@ export class PrismaSASEClient {
             entitlement.label = role.label
             entitlement.role = role.name
             entitlement.type = 'role'
-            entitlement.resource = role.app_id ? 'prn:' + global.__TSGID + ':' + role.app_id + ':::' : 'prn:' + global.__TSGID + '::::'
+            entitlement.resource = role.app_id ? 'prn:' + globalThis.__TSGID + ':' + role.app_id + ':::' : 'prn:' + globalThis.__TSGID + '::::'
         } else if (type == 'custom_role') {
             const response = await httpClient.get('iam/v1/custom_roles/' + identity).catch((error: unknown) => {
                 throw new ConnectorError(`Failed to retrieve custom roles: ${error}`)
@@ -379,7 +536,12 @@ export class PrismaSASEClient {
             entitlement.label = role.label
             entitlement.role = role.name
             entitlement.type = 'role'
-            entitlement.resource = role.tsg_id ? 'prn:' + role.tsg_id + ':prima_access:::' : 'prn:' + global.__TSGID + '::::'
+            entitlement.resource = role.tsg_id ? 'prn:' + role.tsg_id + ':prima_access:::' : 'prn:' + globalThis.__TSGID + '::::'
+        } else if (type == 'csp_role') {
+            for (var csp_role of csp_rolesRef) {
+                if (csp_role.id == identity)
+                    entitlement = csp_role
+            }
         }
         return entitlement
     }
